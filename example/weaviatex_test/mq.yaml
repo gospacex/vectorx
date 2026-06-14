@@ -1,0 +1,15 @@
+vectorx:
+  trace:
+    enabled: true
+    service_name: vectorx-weaviate-example
+    exporter: otlp
+    endpoint: localhost:4317
+    protocol: grpc
+    sampler_type: always_on
+    sampler_ratio: 1.0
+
+  weaviate:
+    - name: primary
+      scheme: http
+      host: localhost:8080
+      class: VectorXTest

@@ -1,0 +1,16 @@
+vectorx:
+  trace:
+    enabled: false
+    service_name: vectorx-test
+    exporter: otlp
+  milvus:
+    - name: primary
+      address: localhost:19530
+  qdrant:
+    - name: backup
+      host: localhost
+      port: 6334
+  weaviate:
+    - name: audit
+      scheme: http
+      host: localhost:8080

@@ -1,0 +1,25 @@
+vectorx:
+  trace:
+    enabled: true
+    service_name: vectorx-runtime-example
+    exporter: otlp
+    endpoint: localhost:4317
+    protocol: grpc
+    sampler_type: always_on
+    sampler_ratio: 1.0
+
+  milvus:
+    - name: primary
+      address: localhost:19530
+      db_name: default
+      collection: vectorx_test
+
+  qdrant:
+    - name: backup
+      host: localhost
+      port: 6334
+
+  weaviate:
+    - name: audit
+      scheme: http
+      host: localhost:8080

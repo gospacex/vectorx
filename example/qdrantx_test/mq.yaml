@@ -1,0 +1,15 @@
+vectorx:
+  trace:
+    enabled: true
+    service_name: vectorx-qdrant-example
+    exporter: otlp
+    endpoint: localhost:4317
+    protocol: grpc
+    sampler_type: always_on
+    sampler_ratio: 1.0
+
+  qdrant:
+    - name: primary
+      host: localhost
+      port: 6334
+      grpc: true

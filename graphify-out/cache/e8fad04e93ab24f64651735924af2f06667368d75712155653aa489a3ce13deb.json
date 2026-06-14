@@ -1,0 +1,1 @@
+{"nodes": [{"id": "qdrantx_tracing_go", "label": "tracing.go", "file_type": "code", "source_file": "qdrantx/tracing.go", "source_location": "L1"}], "edges": [{"source": "qdrantx_tracing_go", "target": "observability", "relation": "imports_from", "confidence": "EXTRACTED", "source_file": "qdrantx/tracing.go", "source_location": "L3", "weight": 1.0}]}

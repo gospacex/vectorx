@@ -1,0 +1,17 @@
+vectorx:
+  trace:
+    enabled: true
+    service_name: vectorx-milvus-example
+    exporter: otlp
+    endpoint: localhost:4317
+    protocol: grpc
+    sampler_type: always_on
+    sampler_ratio: 1.0
+
+  milvus:
+    - name: primary
+      address: localhost:19530
+      username: ""
+      password: ""
+      db_name: default
+      collection: vectorx_test
