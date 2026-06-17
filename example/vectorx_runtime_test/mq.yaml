@@ -22,4 +22,4 @@ vectorx:
   weaviate:
     - name: audit
       scheme: http
-      host: localhost:8080
+      host: localhost:8088

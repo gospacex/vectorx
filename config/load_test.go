@@ -35,8 +35,11 @@ vectorx:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.VectorX.Trace.Exporter != "otlp" {
-		t.Fatalf("trace.exporter = %q", cfg.VectorX.Trace.Exporter)
+	if cfg.VectorX.Trace.Exporter != "jaeger" {
+		// mqx.TracingConfig.Validate normalizes "otlp" → "jaeger" because
+		// "otlp" is not in mqx's allow-list. The vectorx exporter.Build
+		// accepts both names; the post-Validate canonical name is "jaeger".
+		t.Fatalf("trace.exporter after Validate = %q (want %q)", cfg.VectorX.Trace.Exporter, "jaeger")
 	}
 	if len(cfg.VectorX.Milvus) != 1 || cfg.VectorX.Milvus[0].Name != "primary" {
 		t.Fatalf("milvus[0].name = %+v", cfg.VectorX.Milvus)

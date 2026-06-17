@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"time"
 
 	"github.com/gospacex/vectorx/config"
 	"github.com/gospacex/vectorx/milvusx"
@@ -20,6 +21,12 @@ import (
 
 	"go.opentelemetry.io/otel"
 )
+
+// closeTimeout caps the time Close spends flushing the OTel pipeline.
+// Without a cap, a hung collector will block application shutdown
+// indefinitely; production deployments need a deterministic upper bound
+// so K8s liveness probes can do their job.
+const closeTimeout = 5 * time.Second
 
 // ErrClosed is returned by Runtime accessor methods after Close has been
 // called. Accessors check this sentinel under an RWMutex read-lock; adapter
@@ -184,8 +191,13 @@ func (r *Runtime) MustWeaviate(name string) *weaviatex.Weaviatex {
 }
 
 // Close flushes and shuts down the OTel TracerProvider (if observability was
-// enabled) and calls any registered per-adapter close hooks. Safe to call
-// multiple times: subsequent calls return nil without re-invoking closers.
+// enabled), calls every cached adapter's Close, then runs any registered
+// per-adapter close hooks. Adapter close happens BEFORE the OTel shutdown
+// so any final span emitted during a gRPC drain still makes it out (the
+// OTel batch processor's own Shutdown happens last, under r.closers).
+//
+// Safe to call multiple times: subsequent calls return nil without
+// re-invoking closers.
 //
 // The write-lock is held for the entire duration of Close. This blocks all
 // concurrent accessor calls until Close returns, eliminating the TOCTOU
@@ -199,6 +211,20 @@ func (r *Runtime) Close() error {
 	}
 	r.closed = true
 	var errs []error
+	// 1. Drain adapter caches BEFORE OTel shutdown so any "client
+	//    closed during a final RPC" error still records on a span.
+	if err := milvusx.CloseAll(); err != nil {
+		errs = append(errs, fmt.Errorf("milvusx: %w", err))
+	}
+	if err := qdrantx.CloseAll(); err != nil {
+		errs = append(errs, fmt.Errorf("qdrantx: %w", err))
+	}
+	if err := weaviatex.CloseAll(); err != nil {
+		errs = append(errs, fmt.Errorf("weaviatex: %w", err))
+	}
+	// 2. Run the OTel closer hooks (TracerProvider.Shutdown with the
+	//    5s timeout) last so the final spans from the adapter close
+	//    above are flushed.
 	for i := len(r.closers) - 1; i >= 0; i-- {
 		if err := r.closers[i].Close(); err != nil {
 			errs = append(errs, err)
@@ -213,5 +239,7 @@ type tpCloser struct {
 }
 
 func (t tpCloser) Close() error {
-	return t.provider.Shutdown(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), closeTimeout)
+	defer cancel()
+	return t.provider.Shutdown(ctx)
 }

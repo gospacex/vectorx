@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/gospacex/vectorx/config"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -31,12 +32,27 @@ func SetRedisPublisher(p SpanPublisher) { redisPublisher = p }
 func SetKafkaPublisher(p SpanPublisher) { kafkaPublisher = p }
 
 // Build selects and constructs the exporter per cfg.Exporter.
-// For "otlp" returns an *otlptrace.Exporter.
-// For "redis" / "kafka" returns a stream-backed exporter implementing
-// sdktrace.SpanExporter, ready to wire into a TracerProvider.
+//
+// Accepted exporter values (case-insensitive — the value is lowercased
+// before lookup):
+//
+//   - "otlp" / "jaeger"   → OTLP gRPC or HTTP (the protocol field picks one;
+//                           "jaeger" is accepted as an alias because modern
+//                           Jaeger collectors speak OTLP natively and mqx
+//                           normalizes unknown exporters to "jaeger")
+//   - "redis" / "redis_stream" → SpanPublisher-backed stream exporter
+//                                 ("redis_stream" is mqx's canonical name;
+//                                  "redis" is the legacy vectorx name)
+//   - "kafka"             → SpanPublisher-backed topic exporter
+//
+// For "redis" / "kafka" the application must inject the publisher via
+// SetRedisPublisher / SetKafkaPublisher before InitTracing.
 func Build(cfg *config.TracingConfig) (sdktrace.SpanExporter, error) {
+	if cfg == nil {
+		return nil, fmt.Errorf("exporter.Build: nil config")
+	}
 	ctx := context.Background()
-	switch cfg.Exporter {
+	switch normalizeExporter(cfg.Exporter) {
 	case "otlp":
 		return buildOTLP(ctx, cfg)
 	case "redis":
@@ -44,7 +60,24 @@ func Build(cfg *config.TracingConfig) (sdktrace.SpanExporter, error) {
 	case "kafka":
 		return buildKafkaExporter(cfg)
 	}
-	return nil, fmt.Errorf("unknown exporter %q", cfg.Exporter)
+	return nil, fmt.Errorf("exporter.Build: unknown exporter %q (want otlp|jaeger|redis|redis_stream|kafka)", cfg.Exporter)
+}
+
+// normalizeExporter maps every accepted alias to its canonical vectorx
+// form so the switch in Build is the single source of truth. This keeps
+// the YAML schema forgiving — users coming from mqx (redis_stream) and
+// users reading the vectorx README (redis) both work.
+func normalizeExporter(name string) string {
+	switch strings.ToLower(name) {
+	case "otlp", "jaeger":
+		return "otlp"
+	case "redis", "redis_stream":
+		return "redis"
+	case "kafka":
+		return "kafka"
+	default:
+		return name
+	}
 }
 
 // spanRecord is the wire format published to redis/kafka backends.

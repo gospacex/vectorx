@@ -120,6 +120,39 @@ func (m *Milvusx) DescribeCollection(ctx context.Context, collName string) (*ent
 	return desc, err
 }
 
+// Close releases the underlying gRPC connection and evicts this instance
+// from the package-level cache. The eviction is what makes Close safe
+// across multiple test cases in the same binary (and across reloads in
+// long-running services that switch named instances): the next
+// GetMilvus(name) call will construct a fresh client with a live
+// connection, instead of returning the cached closed one — which would
+// surface as a transient `grpc: the client connection is closing`
+// error on the next RPC.
+//
+// The cache eviction runs before the conn-close attempt so that
+// callers who use a zero-value *Milvusx (e.g. unit tests that drive
+// the cache directly) still get the eviction. The conn-close
+// short-circuits when the embedded client is nil.
+//
+// Safe to call multiple times; the second call sees m.Client == nil
+// and a cache miss, both of which are no-ops.
 func (m *Milvusx) Close() error {
-	return m.Client.Close()
+	if m.cfg != nil {
+		clientCache.Delete(m.cfg.Name)
+		if v, ok := forcedCloseErr.LoadAndDelete(m.cfg.Name); ok {
+			// Comma-ok on purpose: a non-error value would panic the
+			// process. The sync.Map is test-only (production never
+			// stores anything), so this should always be an error,
+			// but defending against bad test fixtures is cheap.
+			if e, ok := v.(error); ok {
+				return e
+			}
+		}
+	}
+	if m.Client == nil {
+		return nil
+	}
+	err := m.Client.Close()
+	m.Client = nil
+	return err
 }

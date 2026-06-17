@@ -6,6 +6,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+
+	"github.com/gospacex/vectorx/config"
 )
 
 func writeTestConfig(t *testing.T, content string) string {
@@ -75,6 +77,34 @@ func TestGetQdrant_ConcurrentAccess_RaceFree(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+}
+
+// TestQdrantx_Close_EvictsFromCache is the regression test for the
+// transient "grpc: the client connection is closing" failure seen when
+// multiple test cases in the same binary reuse the same named
+// instance. Before the fix, Close() shut down the gRPC conn but left
+// the *Qdrantx in clientCache, so the next GetQdrant(name) returned
+// the cached instance with a dead *grpc.ClientConn. After the fix,
+// Close() removes the entry so the next GetQdrant(name) constructs
+// a fresh client.
+func TestQdrantx_Close_EvictsFromCache(t *testing.T) {
+	clientCache = sync.Map{}
+	clientLocks = sync.Map{}
+
+	q := &Qdrantx{cfg: &config.QdrantConfig{Name: "evict-me"}}
+	clientCache.Store("evict-me", q)
+
+	if err := q.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	if _, ok := clientCache.Load("evict-me"); ok {
+		t.Fatal("Close did not evict the cache entry")
+	}
+	// Second Close must be a no-op.
+	if err := q.Close(); err != nil {
+		t.Fatalf("second Close: %v", err)
+	}
 }
 
 // BenchmarkGetQdrant_CacheHit measures the per-name singleton hot path:

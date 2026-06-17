@@ -2,13 +2,17 @@ package qdrantx
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
+	"os"
 
 	"github.com/gospacex/vectorx/config"
 	"github.com/gospacex/vectorx/observability"
 	qdrant "github.com/qdrant/go-client/qdrant"
 	"go.opentelemetry.io/otel/attribute"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 )
 
@@ -18,9 +22,23 @@ type Qdrantx struct {
 	conn   *grpc.ClientConn
 }
 
+// newClient builds a gRPC connection to Qdrant. TLS posture is driven by
+// cfg.TLS — when true, the gRPC channel uses server-authenticated TLS with
+// the trust store augmented by cfg.CAFile (private CAs) and cfg.ServerName
+// overriding hostname verification. cfg.InsecureSkipVerify short-circuits
+// the chain check (self-signed clusters; NOT recommended for production).
+//
+// cfg.TLS == false preserves the legacy plaintext behaviour. This is the
+// only branch that uses insecure.NewCredentials; every secure path uses
+// credentials.NewTLS so a misconfigured YAML never silently downgrades to
+// plaintext — if cfg.TLS is true and the trust store cannot be built, the
+// error is returned at startup, not at first RPC.
 func newClient(cfg *config.QdrantConfig) (*Qdrantx, error) {
 	addr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
-	opts := []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}
+	opts, err := dialOptions(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("build dial options: %w", err)
+	}
 	conn, err := grpc.NewClient(addr, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("connect: %w", err)
@@ -30,6 +48,45 @@ func newClient(cfg *config.QdrantConfig) (*Qdrantx, error) {
 		cfg:    cfg,
 		conn:   conn,
 	}, nil
+}
+
+// dialOptions is split out so the TLS construction can be unit-tested
+// independently from the gRPC dial itself. Returns insecure credentials
+// when cfg.TLS is false (legacy default); tls credentials otherwise.
+func dialOptions(cfg *config.QdrantConfig) ([]grpc.DialOption, error) {
+	if !cfg.TLS {
+		return []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}, nil
+	}
+	tlsCfg := &tls.Config{
+		ServerName:         cfg.ServerName,
+		InsecureSkipVerify: cfg.InsecureSkipVerify, //nolint:gosec // gated on explicit YAML opt-in
+		MinVersion:         tls.VersionTLS12,
+	}
+	if cfg.CAFile != "" {
+		pool, err := loadCAPool(cfg.CAFile)
+		if err != nil {
+			return nil, err
+		}
+		tlsCfg.RootCAs = pool
+	}
+	return []grpc.DialOption{grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg))}, nil
+}
+
+// loadCAPool reads a PEM bundle from path and returns a CertPool ready
+// to plug into a tls.Config. Returns an error when the file cannot be
+// read or no certificates were parsed — the latter catches "I dropped
+// the wrong file at /etc/qdrant/ca.pem" instead of silently trusting
+// the system pool only.
+func loadCAPool(path string) (*x509.CertPool, error) {
+	pem, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read CA file %q: %w", path, err)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(pem) {
+		return nil, fmt.Errorf("CA file %q: no certificates parsed (not a valid PEM bundle?)", path)
+	}
+	return pool, nil
 }
 
 // All public methods wrap the corresponding qdrant.PointsClient call with
@@ -297,6 +354,38 @@ func (q *Qdrantx) Query(ctx context.Context, in *qdrant.QueryPoints, opts ...grp
 	return res, err
 }
 
+// Close releases the underlying gRPC connection and evicts this instance
+// from the package-level cache. Without the eviction, the next
+// GetQdrant(name) call would hand back the same *Qdrantx with a
+// dead *grpc.ClientConn — every subsequent RPC would fail with
+// `grpc: the client connection is closing`. Evicting from the cache
+// forces a fresh client (and fresh conn) on the next Get, matching
+// the lazy-build-on-first-use contract of the package.
+//
+// The cache eviction runs before the conn-close attempt so that
+// callers who use a zero-value *Qdrantx (e.g. unit tests that drive
+// the cache directly) still get the eviction. The conn-close
+// short-circuits when the embedded conn is nil.
+//
+// Safe to call multiple times; the second call sees q.conn == nil
+// and a cache miss, both of which are no-ops.
 func (q *Qdrantx) Close() error {
-	return q.conn.Close()
+	if q.cfg != nil {
+		clientCache.Delete(q.cfg.Name)
+		if v, ok := qdrantForcedCloseErr.LoadAndDelete(q.cfg.Name); ok {
+			// Comma-ok on purpose: a non-error value would panic the
+			// process. The sync.Map is test-only (production never
+			// stores anything), so this should always be an error,
+			// but defending against bad test fixtures is cheap.
+			if e, ok := v.(error); ok {
+				return e
+			}
+		}
+	}
+	if q.conn == nil {
+		return nil
+	}
+	err := q.conn.Close()
+	q.conn = nil
+	return err
 }

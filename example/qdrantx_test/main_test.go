@@ -14,6 +14,7 @@ import (
 	"github.com/gospacex/vectorx/observability"
 	"github.com/gospacex/vectorx/observability/exporter"
 	"github.com/gospacex/vectorx/qdrantx"
+	qdrant "github.com/qdrant/go-client/qdrant"
 )
 
 func TestQdrantE2E_OTLP(t *testing.T) {
@@ -62,7 +63,10 @@ func TestQdrantE2E_RedisStream(t *testing.T) {
 	c, _ := qdrantx.GetQdrant("primary")
 	defer c.Close()
 
-	c.Upsert(context.Background(), "test_collection", nil, nil)
+	c.Upsert(context.Background(), &qdrant.UpsertPoints{
+		CollectionName: "test_collection",
+		Points:         nil,
+	})
 	t.Logf("redis stream test done, spans published: %d", spansPublished)
 }
 
@@ -87,7 +91,10 @@ func TestQdrantE2E_KafkaTopic(t *testing.T) {
 	c, _ := qdrantx.GetQdrant("primary")
 	defer c.Close()
 
-	c.Upsert(context.Background(), "test_collection", nil, nil)
+	c.Upsert(context.Background(), &qdrant.UpsertPoints{
+		CollectionName: "test_collection",
+		Points:         nil,
+	})
 	t.Logf("kafka topic test done, spans published: %d", spansPublished)
 }
 
@@ -136,7 +143,10 @@ func Example_qdrantx_redis() {
 	c, _ := qdrantx.GetQdrant("primary")
 	defer c.Close()
 
-	c.Upsert(context.Background(), "test_collection", nil, nil)
+	c.Upsert(context.Background(), &qdrant.UpsertPoints{
+		CollectionName: "test_collection",
+		Points:         nil,
+	})
 	fmt.Println("trace exported via redis stream")
 }
 
@@ -157,6 +167,9 @@ func Example_qdrantx_kafka() {
 	c, _ := qdrantx.GetQdrant("primary")
 	defer c.Close()
 
-	c.Upsert(context.Background(), "test_collection", nil, nil)
+	c.Upsert(context.Background(), &qdrant.UpsertPoints{
+		CollectionName: "test_collection",
+		Points:         nil,
+	})
 	fmt.Println("trace exported via kafka topic")
 }

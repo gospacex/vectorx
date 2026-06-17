@@ -6,6 +6,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+
+	"github.com/gospacex/vectorx/config"
 )
 
 func writeTestConfig(t *testing.T, content string) string {
@@ -83,6 +85,39 @@ func TestGetMilvus_ConcurrentAccess_RaceFree(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+}
+
+// TestMilvusx_Close_EvictsFromCache is the regression test for the
+// transient "grpc: the client connection is closing" failure seen when
+// multiple test cases in the same binary reuse the same named
+// instance. Before the fix, Close() shut down the gRPC conn but left
+// the *Milvusx in clientCache, so the next GetMilvus(name) returned
+// the cached instance with a dead conn. After the fix, Close()
+// removes the entry so the next GetMilvus(name) constructs a fresh
+// client.
+func TestMilvusx_Close_EvictsFromCache(t *testing.T) {
+	clientCache = sync.Map{}
+	clientLocks = sync.Map{}
+
+	// Hand-craft a *Milvusx with a nil embedded client — Close() must
+	// still evict the cache entry even when there's no real conn to
+	// shut down (the first-call-to-GetMilvus in a failing test would
+	// have left the cache in this state).
+	m := &Milvusx{cfg: &config.MilvusConfig{Name: "evict-me"}}
+	clientCache.Store("evict-me", m)
+
+	if err := m.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	if _, ok := clientCache.Load("evict-me"); ok {
+		t.Fatal("Close did not evict the cache entry")
+	}
+	// Second Close must be a no-op (not panic, not return spurious
+	// error from a nil conn).
+	if err := m.Close(); err != nil {
+		t.Fatalf("second Close: %v", err)
+	}
 }
 
 // BenchmarkGetMilvus_CacheHit measures the per-name singleton hot path:
