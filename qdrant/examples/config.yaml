@@ -1,0 +1,7 @@
+vectorx:
+  stores:
+    default:
+      driver: qdrant
+      address: "localhost:6333"
+      dim: 4
+      enable_trace: true

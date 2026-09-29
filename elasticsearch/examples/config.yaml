@@ -1,0 +1,7 @@
+vectorx:
+  stores:
+    default:
+      driver: elasticsearch
+      address: "http://localhost:9200"
+      dim: 4
+      enable_trace: true

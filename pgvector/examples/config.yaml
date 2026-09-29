@@ -1,0 +1,7 @@
+vectorx:
+  stores:
+    default:
+      driver: pgvector
+      address: "postgres://postgres:postgres@localhost:5432/vectorx?sslmode=disable"
+      dim: 4
+      enable_trace: true

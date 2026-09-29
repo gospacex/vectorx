@@ -1,0 +1,8 @@
+vectorx:
+  stores:
+    default:
+      driver: pinecone
+      token: "${PINECONE_API_KEY}"
+      namespace: "example-namespace"
+      dim: 4
+      enable_trace: true

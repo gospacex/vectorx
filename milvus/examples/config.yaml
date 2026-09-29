@@ -1,0 +1,7 @@
+vectorx:
+  stores:
+    default:
+      driver: milvus
+      address: "localhost:19530"
+      dim: 4
+      enable_trace: true
