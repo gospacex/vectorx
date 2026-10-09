@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/gospacex/configx"
@@ -83,10 +84,21 @@ func (c *Config) FillDefaults() {
 
 // ===== Factory =====
 
+// creatorsMu 保护下面的 creators map。
+//
+// 背景：REVIEW-REPORT.md 第二优先级第 6 条点名 vectorx 要给 factory map 加锁，
+// 但第八节已修复清单未覆盖。未加锁时并发注册 + 并发查找会触发 Go 运行时的
+// "fatal error: concurrent map writes" —— 不可 recover 的崩溃级故障
+// （已由 interface_test.go 的 TestFactoryConcurrentAccess 在 -race 下复现，
+// 与 coordx / lockx 属同源缺陷）。
+var creatorsMu sync.RWMutex
+
 var creators = map[string]func(*Config) (CollectionClient, error){}
 
 // RegisterCreator 注册向量数据库驱动创建函数
 func RegisterCreator(name string, creator func(*Config) (CollectionClient, error)) {
+	creatorsMu.Lock()
+	defer creatorsMu.Unlock()
 	creators[name] = creator
 }
 
@@ -98,7 +110,11 @@ func New(cfg *Config) (CollectionClient, error) {
 	// 各驱动侧的 *traceflag.Tracer 惰性判定，此处收敛结果即时生效。
 	cfg.EnableTrace = traceflag.Apply("vectorx", cfg.EnableTrace)
 
+	// 只锁 map 查找，creator 放到锁外调用 —— 避免 creator 内部再注册
+	// 其它驱动时自死锁，也缩短持锁时间。
+	creatorsMu.RLock()
 	creator, ok := creators[cfg.Driver]
+	creatorsMu.RUnlock()
 	if !ok {
 		return nil, fmt.Errorf("vectorx: driver %q not registered; make sure to import the driver package", cfg.Driver)
 	}
